@@ -1,0 +1,1090 @@
+* MatrixProductStates.jl
+
+This is a package-in-progress in which I am implementing the [[https://en.wikipedia.org/wiki/Density_matrix_renormalization_group][DMRG]]
+algorithm over matrix product states as explained in Schollwöck's [[https://www.sciencedirect.com/science/article/pii/S0003491610001752][The
+density-matrix renormalization group in the age of matrix product
+states]]. A similar project has been undertaken in [[https://github.com/0/LatticeSweeper.jl][LatticeSweeper.jl]].
+
+I'm not longer actively developthing this library, but I think it still has value as an educational resource for those wanting to learn DMRG.
+Julia made it possible for me to implement this package using syntax which is very close to the math written in the online literature.
+
+To acquire this package, simply open a ~julia~ repl (obtained from https://julialang.org/downloads/) and type
+#+BEGIN_SRC julia
+using Pkg; Pkg.add("https://github.com/MasonProtter/MatrixProductStates.jl.git")
+#+END_SRC
+
+** Example: Transverse Field Ising Model 
+#+HTML: <details><summary>Click me!</summary>
+#+HTML: <p>
+Suppose we didn't realize the one dimensional transverse field Ising
+model was exactly solvable and we wanted to study it with DMRG.
+
+The TFIM Hamiltonian is written
+#+BEGIN_SRC 
+H = - ∑ᵢ σᶻᵢσᶻᵢ₊₁ - ∑ᵢ g σˣᵢ 
+#+END_SRC
+which in MPO form can be written as
+#+BEGIN_SRC 
+H = W¹ W² W³... Wᴸ⁻¹ Wᴸ
+                   [ 𝟙    𝟘    𝟘] [ 𝟙    𝟘    𝟘]     [ 𝟙    𝟘    𝟘] [ 𝟙  ]
+  = [-gσˣ  σᶻ   𝟙] | -σᶻ  𝟘    𝟘| | -σᶻ  𝟘    𝟘| ... | -σᶻ  𝟘    𝟘| |-σᶻ |
+                   [-gσˣ  σᶻ   𝟙] [-gσˣ  σᶻ   𝟙]     [-gσˣ  σᶻ  𝟙] [-gσˣ]
+#+END_SRC
+We can study this Hamiltonian using MatrixProductStates.jl as follows:
+
+First, make a function for generating the Hamiltonian given a coupling strength ~g = h/J~ and a system length ~L~:
+#+BEGIN_SRC julia
+using MatrixProductStates
+
+function H_TFIM(g, L)
+    id = [1  0; 
+          0  1]
+    σˣ = [0  1; 
+          1  0]
+    σᶻ = [1  0; 
+          0 -1]
+    W_tnsr = zeros(Complex{Float64}, 3, 3, 2, 2)
+    W_tnsr[1, 1, :, :] = id    
+    W_tnsr[2, 1, :, :] = -σᶻ  
+    W_tnsr[3, 1, :, :] = -g*σˣ
+    W_tnsr[3, 2, :, :] = σᶻ   
+    W_tnsr[3, 3, :, :] = id   
+
+    return MPO(W_tnsr, L) # MPO will assume that W¹ = W_tnsr[end:end, :, :, :] and Wᴸ = W_tnsr[:, 1:1, :, :]
+end
+#+END_SRC
+
+*** Ground State
+Suppose we want to know the ground state of this system for
+~g=0.8~ and ~L=12~ and we have no idea what the MPS form of the ground
+state looks like a-priori.
+#+BEGIN_SRC julia
+g = 1.1; L = 12;
+
+d    = 2;   # This is the local Hilbert space dimension for each site
+Dcut = 100; # This is the maximum bond dimension we'll allow our matrix product state to take
+
+H = H_TFIM(g, L)
+ψ = randn(MPS{L, Complex{Float64}}, Dcut, d) # Generate a completely randomized matrix product state
+
+ϕ, E₀ = ground_state(ψ, H, quiet=true) #Set quiet to false (the deault) to turn off notifications about the algorithm's progress
+#+END_SRC
+We now have the ground state ~ϕ~, and an estimate of it's energy
+eigenvalue ~E₀~!
+
+Note that 12 sites can be easily studied with far less computational
+cost as an exact diagonalization, but I didn't want to suggest doing
+something like ~L=50~ right off the bat since that took ~90 minutes on
+my machine.
+
+We can make sure that this state's energy matches our estimate:
+#+BEGIN_SRC julia
+julia> ϕ' * H * ϕ ≈ E₀ # computing ⟨ϕ|H|ϕ⟩
+true
+#+END_SRC
+and we can varify that it's approximately an eigenstate:
+#+BEGIN_SRC julia
+julia> ϕ' * H * H * ϕ  ≈ (ϕ' * H * ϕ)^2 # computing ⟨ϕ| H^2 |ϕ⟩ ≈ (⟨ϕ|H|ϕ⟩)^2
+true
+#+END_SRC
+
+
+*** Correlators
+We can take advantage of the ~two_point_correlator~ function to study spin-spin correlations in the TFIM 
+#+BEGIN_SRC julia :exports both
+using UnicodePlots
+
+σᶻ = [1 0 
+      0 -1]
+
+zz(i, j) = two_point_correlator(i=>σᶻ, j=>σᶻ, 12)
+
+js = 2:12
+
+zzs = [realize(ϕ'*zz(1, j)*ϕ) for j in js] #realize will convert complex numbers with a small imaginary part to real.
+
+lineplot(js, zzs, canvas=DotCanvas, ylim=[0, 1.01], width=80, height=30, 
+         ylabel="⟨σᶻ₁σᶻⱼ⟩", xlabel="lattice site j", title="Spin-Spin Correlation for g = $g")
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_EXAMPLE 
+                                      Spin-Spin Correlation for g = 1.1
+              ┌────────────────────────────────────────────────────────────────────────────────┐ 
+         1.01 │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+⟨σᶻ₁σᶻⱼ⟩      │                                                                                │ 
+              │                                                                                │ 
+              │:                                                                               │ 
+              │ '.                                                                             │ 
+              │   '.                                                                           │ 
+              │     '.                                                                         │ 
+              │       '.                                                                       │ 
+              │         ''.                                                                    │ 
+              │            ''..                                                                │ 
+              │                ''...                                                           │ 
+              │                     ''....                                                     │ 
+              │                           ''''....                                             │ 
+              │                                   '''''.......                                 │ 
+              │                                               '''''''.........                 │ 
+              │                                                               '''''''''........│ 
+            0 │                                                                                │ 
+              └────────────────────────────────────────────────────────────────────────────────┘ 
+              2                                                                               12
+                                               lattice site j
+#+END_EXAMPLE
+which shows exponentially decaying correlations in the ground state,
+as expected for ~g > 1~. We can also redo our calculation in the
+ordered phase:
+#+BEGIN_SRC julia  :exports both
+g = 0.8;
+
+H = H_TFIM(g, L)
+
+ϕ, Eₒ = ground_state(ψ, H, quiet=true)
+
+ordered_zzs = [realize(ϕ'*zz(1, j)*ϕ) for j in js]
+
+lineplot(js, realize.(ordered_zzs), canvas=DotCanvas, ylim=[0, 1.01], width=80, height=30, 
+         ylabel="⟨σᶻ₁σᶻⱼ⟩", xlabel="lattice site j", title="Spin-Spin Correlation for g = $g")
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_EXAMPLE
+                                      Spin-Spin Correlation for g = 0.8
+              ┌────────────────────────────────────────────────────────────────────────────────┐ 
+         1.01 │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │.                                                                               │ 
+              │ ''.                                                                            │ 
+              │    ''..                                                                        │ 
+              │        '''....                                                                 │ 
+⟨σᶻ₁σᶻⱼ⟩      │               ''''''.........                                                  │ 
+              │                              ''''''''''''...........                           │ 
+              │                                                     '''''''......              │ 
+              │                                                                  '''....       │ 
+              │                                                                         '..    │ 
+              │                                                                            ''..│ 
+              │                                                                               '│ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+              │                                                                                │ 
+            0 │                                                                                │ 
+              └────────────────────────────────────────────────────────────────────────────────┘ 
+              2                                                                               12
+                                               lattice site j
+#+END_EXAMPLE
+
+#+HTML: </details>
+#+HTML: </p>
+
+
+** Source Code
+This readme is a literate document containing all of the source and test code for the package. Check it out, I think it's surprisingly legible. 
+The sections Matrix Product States, Matrix Product Operatiors, Compression and Iterative Ground State Search are based directly on the math 
+written in Schollwöck's review.
+
+*** Module Definition
+#+HTML: <details><summary>Source</summary>
+#+HTML: <p>
+#+BEGIN_SRC julia :comments both :tangle src/MatrixProductStates.jl
+module MatrixProductStates
+
+using LinearAlgebra, TensorOperations, TensorCast, LowRankApprox, Arpack, Strided, SparseArrays
+#using ProgressMeter
+
+export *, /, ==, ≈, isequal, adjoint, getindex, randn
+export MPS, MPO, left, right, compress, imag_time_evolution, rightcanonical, leftcanonical 
+export ground_state, two_point_correlator, realize
+
+include("utils.jl")
+include("MPS.jl")
+include("MPO.jl")
+include("compression.jl")
+include("contraction.jl")
+include("groundstate.jl")
+include("correlation.jl")
+include("timeevolution.jl")
+
+end
+#+END_SRC
+#+HTML: </details>
+#+HTML: </p>
+*** Utils
+#+HTML: <details><summary>Source</summary>
+#+HTML: <p>
+#+BEGIN_SRC julia :comments both :tangle src/utils.jl
+export ⊗, realize
+
+abstract type Direction end
+
+struct Left  <: Direction end # Often useful to dispatch on direction an algorithm is going
+struct Right <: Direction end
+
+const left  = Left()
+const right = Right()
+
+A ⊗ B = kron(A, B)
+
+realize(x::Number) = error("Unrecognized numerical type")
+realize(x::Real) = x
+function realize(x::Complex; ϵ=1e-10)
+    abs(imag(x)) < ϵ || error("Non-zero imaginary component, $(imag(x))")
+    real(x)
+end
+
+dg(M::Array{T, 4}) where {T} = permutedims(conj.(M), (2, 1, 3, 4))
+dg(M::Array{T, 3}) where {T} = permutedims(conj.(M), (2, 1, 3))
+
+not(x) = ~x
+
+#+END_SRC
+#+HTML: </details>
+#+HTML: </p>
+*** Matrix Product States
+#+HTML: <details><summary>Source</summary>
+#+HTML: <p>
+#+BEGIN_SRC julia :comments both :tangle src/MPS.jl
+"""
+    MPS{L, T<:Number}
+
+Matrix product state on L sites. 
+
+The `i`th tensor in the state has indices `[aⁱ⁻¹, aⁱ, σⁱ]` where
+`(aⁱ⁻¹, aⁱ)` are bond indices and `σⁱ` is the physical index.
+
+A four site MPS would be diagrammatically represented
+
+    σ¹          σ²          σ³          σ⁴
+    |           |           |           | 
+    •--(a¹ a¹)--•--(a² a²)--•--(a³ a³)--•     
+
+Note that `a⁰` and `aᴸ` must be of dimension 1.
+"""
+struct MPS{L, T<:Number} 
+    tensors::Vector{Array{T,3}}
+end
+
+Base.isequal(ψ::MPS, ϕ::MPS)     = (isequal(ψ.tensors, ϕ.tensors))
+Base.isapprox(ψ::MPS, ϕ::MPS)   = isapprox(ψ.tensors, ϕ.tensors)
+
+Base.eltype(::Type{MPS{L, T}}) where {L, T} = T
+
+Base.length(::MPS{L, T}) where {L, T} = L
+
+Base.size(::MPS{L, T}) where {L, T} = (L,)
+Base.getindex(ψ::MPS, i::Int) = getindex(ψ.tensors, i)
+
+Base.:(*)(ψ::MPS{L, T}, x::Number) where {L, T} = MPS{L,T}(ψ.tensors .* x)
+Base.:(*)(x::Number, ψ::MPS) = ψ * x
+Base.:(/)(ψ::MPS{L,T}, x::Number) where {L, T} = MPS{L,T}(ψ.tensors ./ x)
+Base.copy(ψ::MPS{L, T}) where {L, T} = MPS{L,T}(copy.(ψ.tensors))
+
+function Base.randn(::Type{MPS{L, T}}, D::Int, d::Int) where {L, T}
+    tensors = [randn(1, D, d), [randn(D, D, d) for _ in 2:(L-1)]..., randn(D, 1, d)]
+    MPS{L, T}(tensors) |> leftcanonical |> rightcanonical
+end
+
+"""
+    MPS(vs::Vector{Vector})
+Create an `MPS` representing a product state (all bonds have dimension 1),
+where each site is described by the corresponding element of `vs`.
+"""
+function MPS(vs::Vector{Vector{T}}) where {T}
+    L = length(vs)
+
+    tensrs = Vector{Array{T,3}}(undef, L)
+    for i in 1:L
+        tensrs[i] = reshape(copy(vs[i]), 1, 1, :)
+    end
+
+    MPS{L,T}(tensrs)
+end
+
+"""
+    MPS(v::Vector, L)
+Create an `MPS` for `L` sites representing a uniform product state (all bonds
+have dimension 1), where each site is described by `v`.
+"""
+MPS(v::Vector, L) = MPS([v for _ in 1:L])
+
+function Base.show(io::IO, ::MIME"text/plain", ψ::MPS{L, T}) where {L, T}
+    d = length(ψ.tensors[2][1, 1, :])
+    bonddims = [size(ψ[i][:, :, 1]) for i in 1:L]
+    println(io, "Matrix product state on $L sites")
+    _show_mps_dims(io, L, d, bonddims)
+end
+
+function Base.show(ψ::MPS{L, T}) where {L, T}
+    d = length(ψ.tensors[2][1, 1, :])
+    bonddims = [size(ψ[i][:, :, 1]) for i in 1:L]
+    println("Matrix product state on $L sites")
+    _show_mps_dims(L, d, bonddims)
+end
+
+function _show_mps_dims(io::IO, L, d, bonddims)
+    println(io, "  Physical dimension: $d")
+    print(io, "  Bond dimensions:   ")
+    if L > 8
+        for i in 1:8
+            print(io, bonddims[i], " × ")
+        end
+        print(io, " ... × ", bonddims[L])
+    else
+        for i in 1:(L-1)
+            print(io, bonddims[i], " × ")
+        end
+        print(io, bonddims[L])
+    end
+end
+
+function Base.show(io::IO, ψ::MPS{L, T}) where {L, T}
+    print(io, "MPS on $L sites")
+end
+
+#+END_SRC
+
+#+HTML: <details><summary>Adjoint MPS</summary>
+#+HTML: <p>
+
+#+BEGIN_SRC julia :comments both :tangle src/MPS.jl
+function Base.adjoint(ψ::MPS{L, T}) where {L,T}
+    Adjoint{T, MPS{L, T}}(ψ)
+end
+
+function Base.show(io::IO, ::MIME"text/plain", ψ::Adjoint{T, MPS{L, T}}) where {L, T}
+    d = length(ψ.parent[2][1, 1, :])
+    bonddims = reverse([reverse(size(ψ.parent[i][:, :, 1])) for i in 1:L])
+    println(io, "Adjoint matrix product state on $L sites")
+    _show_mps_dims(io, L, d, bonddims)
+end
+
+function Base.show(io::IO, ψ::Adjoint{T, MPS{L, T}}) where {L, T}
+    print(io, "Adjoint MPO on $L sites")t
+end
+
+Base.size(::Adjoint{T, MPS{L, T}}) where {L, T} = (1, L)
+
+function Base.getindex(ψ::Adjoint{T, MPS{L, T}}, args...) where {L, T}
+    out = getindex(reverse(ψ.parent.tensors), args...)
+    permutedims(conj.(out), (2, 1, 3))
+end
+
+adjoint_tensors(ψ::MPS) = reverse(conj.(permutedims.(ψ.tensors, [(2, 1, 3)])))
+#+END_SRC
+
+#+HTML: </p>
+#+HTML: </details>
+
+#+HTML: <details><summary>MPS Contraction</summary>
+#+HTML: <p>
+#+BEGIN_SRC julia :comments both :tangle src/contraction.jl
+
+"""
+    Base.:(*)(ψ′::Adjoint{T, MPS{L, T}}, ϕ::MPS{L, T}) where {L, T}
+representing
+    •--(b¹ b¹)--•--(b² b²)--•--(b³ b³)--•       
+    |           |           |           | 
+    σ′¹         σ′²         σ′³         σ′⁴
+    σ′¹         σ′²         σ′³         σ′⁴
+    |           |           |           | 
+    •--(a¹ a¹)--•--(a² a²)--•--(a³ a³)--•
+"""
+function Base.:(*)(ψ′::Adjoint{T, MPS{L, T}}, ϕ::MPS{L, T}) where {L, T}
+    ψ = ψ′.parent
+
+    M   = ϕ.tensors[1]
+    M̃dg = dg(ψ.tensors[1])
+    
+    @tensor cont[b₁, a₁] := M̃dg[b₁, 1, σ₁] * M[1, a₁, σ₁]
+    
+    for i in 2:L-1
+        M   = ϕ.tensors[i]
+        M̃dg = dg(ψ.tensors[i])
+
+        @tensor cont[bᵢ, aᵢ] := M̃dg[bᵢ, bᵢ₋₁, σᵢ] * cont[bᵢ₋₁, aᵢ₋₁] * M[aᵢ₋₁, aᵢ, σᵢ]
+    end
+    M   = ϕ.tensors[L]
+    M̃dg = dg(ψ.tensors[L])
+    
+    @tensor M̃dg[1, bᴸ⁻¹, σᴸ] * cont[bᴸ⁻¹, aᴸ⁻¹] * M[aᴸ⁻¹, 1, σᴸ]
+end
+
+#+END_SRC
+
+#+HTML: </p>
+#+HTML: </details>
+
+#+HTML: </p>
+#+HTML: </details>
+
+*** Matrix Product Operators
+#+HTML: <details><summary>Source</summary>
+#+HTML: <p>
+#+BEGIN_SRC julia :comments both :tangle src/MPO.jl
+"""
+    MPO{L, T<:Number}
+
+Matrix product operator on L sites. The `i`th tensor in the operator
+has indices `[aⁱ⁻¹, aⁱ, σⁱ, σ′ⁱ]` where `(σⁱ, σ′ⁱ)` are the physical
+indices and `(aⁱ⁻¹, aⁱ)` are bond indices.
+
+A four site MPS would be diagrammatically represented
+
+    σ¹          σ²          σ³          σ⁴
+    |           |           |           | 
+    •--(a¹ a¹)--•--(a² a²)--•--(a³ a³)--•     
+    |           |           |           | 
+    σ′¹         σ′²         σ′³         σ′⁴
+
+
+Note that `a⁰` and `aᴸ` must be of dimension 1.
+"""
+struct MPO{L, T<:Number}
+    tensors::Vector{Array{T,4}}
+end
+
+
+"""
+    MPO(W::Array{T,4}, L)
+Create an `MPO` for `L` sites with all interior sites containing the tensor
+`W`. The tensor is assumed to have the usual matrix-of-operators structure,
+with the first two indices being the bond (matrix) dimension and the last two
+indices being the physical (operator) dimension. The first and last sites only
+use the last row and first column of `W`, respectively.
+
+For example, the MPO form of the Hamiltonian for the TFIM is
+constructed as with coupling `g` and length `L` is constructed as
+follows:
+
+    id = [1 0
+          0 1]
+
+    σᶻ = [1  0 
+          0 -1]
+
+    σˣ = [0 1
+          1 0]
+
+    σʸ = [0  -im
+          im   0]
+
+    W = zeros(3, 3, 2, 2)
+    W[1, 1, :, :] = id
+    W[2, 1, :, :] = σᶻ
+    W[3, 1, :, :] = -g*σˣ
+    W[3, 2, :, :] = -σᶻ
+    W[3, 3, :, :] = id
+
+returning 
+ 
+    Ĥ::MPO = Ŵ¹ Ŵ² Ŵ³ ⋅⋅⋅ Ŵᴸ⁻¹ Wᴸ
+"""
+function MPO(W::Array{T,4}, L) where {T}
+    L >= 2 || throw(DomainError(L, "At least 2 sites."))
+
+    tensors = Vector{Array{T,4}}(undef, L)
+    
+    tensors[1] = W[end:end, :, :, :] # Row vector.
+    for i in 2:(L-1)
+        tensors[i] = W # Matrix
+    end
+    tensors[L] = W[:, 1:1, :, :] # Column vector.
+
+    MPO{L,T}(tensors)
+end
+
+Base.:(==)(O::MPO, U::MPO) = O.tensors == U.tensors
+Base.:(≈)(O::MPO, U::MPO)  = O.tensors ≈ U.tensors
+Base.getindex(O::MPO, args...) = getindex(O.tensors, args...)
+
+function Base.show(io::IO, ::MIME"text/plain", O::MPO{L, T}) where {L, T}
+    d = length(O[2][1, 1, 1, :])
+    bonddims = [size(O[i][:, :, 1, 1]) for i in 1:L]
+    println(io, "Matrix product Operator on $L sites")
+    _show_mpo_dims(io, L, d, bonddims)
+end
+
+function _show_mpo_dims(io::IO, L, d, bonddims)
+    println(io, "  Physical dimension: $d")
+    print(io, "  Bond dimensions:   ")
+    if L > 8
+        for i in 1:8
+            print(io, bonddims[i], " × ")
+        end
+        print(io, " ... × ", bonddims[L])
+    else
+        for i in 1:(L-1)
+            print(io, bonddims[i], " × ")
+        end
+        print(io, bonddims[L])
+    end
+end
+
+function Base.show(io::IO, O::MPO{L, T}) where {L, T}
+    print(io, "MPO on $L sites")
+end
+#+END_SRC 
+
+#+HTML: <details><summary>MPO Contraction</summary>
+#+HTML: <p>
+#+BEGIN_SRC julia :comments both :tangle src/contraction.jl
+"""
+    Base.:(*)(O::MPO, ψ::MPS)
+representing
+
+    σ¹          σ²          σ³          σ⁴
+    |           |           |           | 
+    •--(b¹ b¹)--•--(b² b²)--•--(b³ b³)--•     
+    |           |           |           | 
+    σ′¹         σ′²         σ′³         σ′⁴
+    σ′¹         σ′²         σ′³         σ′⁴
+    |           |           |           | 
+    •--(a¹ a¹)--•--(a² a²)--•--(a³ a³)--•     
+"""
+function Base.:(*)(O::MPO{L, T}, ψ::MPS{L, T}) where {L, T}
+    tensors = Array{T,3}[]
+    for i in 1:L
+        W = O.tensors[i]
+        M = ψ.tensors[i]
+
+        @reduce N[(bᵢ₋₁, aᵢ₋₁), (bᵢ, aᵢ), σᵢ] :=  sum(σ′ᵢ) W[bᵢ₋₁, bᵢ, σᵢ, σ′ᵢ] * M[aᵢ₋₁, aᵢ, σ′ᵢ]
+        
+        push!(tensors, N)
+    end
+    MPS{L, T}(tensors)
+end
+
+
+"""
+    Base.:(*)(O1::MPO, O2::MPO)
+representing
+
+    σ¹          σ²          σ³          σ⁴
+    |           |           |           | 
+    •--(b¹ b¹)--•--(b² b²)--•--(b³ b³)--•     
+    |           |           |           | 
+    σ′′¹        σ′′²        σ′′³        σ′′⁴
+    σ′′¹        σ′′²        σ′′³        σ′′⁴
+    |           |           |           | 
+    •--(a¹ a¹)--•--(a² a²)--•--(a³ a³)--• 
+    |           |           |           | 
+    σ′¹         σ′²         σ′³         σ′⁴    
+"""
+function Base.:(*)(O1::MPO{L, T}, O2::MPO{L, T}) where {L, T}
+    tensors = Array{T,4}[]
+    for i in 1:L
+        W1 = O1.tensors[i]
+        W2 = O2.tensors[i]
+
+        @reduce V[(bᵢ₋₁, aᵢ₋₁), (bᵢ, aᵢ), σᵢ, σ′ᵢ] :=  sum(σ′′ᵢ) W1[bᵢ₋₁, bᵢ, σᵢ, σ′′ᵢ] * W2[aᵢ₋₁, aᵢ, σ′′ᵢ, σ′ᵢ]
+        
+        push!(tensors, V)
+    end
+    MPO{L, T}(tensors)
+end
+
+"""
+    Base.:(*)(ψ::Adjoint{T,MPS{L,T}}, O::MPO) where {L,T}
+representing
+
+    •--(a¹ a¹)--•--(a² a²)--•--(a³ a³)--•       
+    |           |           |           | 
+    σ′¹         σ′²         σ′³         σ′⁴
+    σ′¹         σ′²         σ′³         σ′⁴
+    |           |           |           | 
+    •--(b¹ b¹)--•--(b² b²)--•--(b³ b³)--•
+    |           |           |           | 
+    σ¹          σ²          σ³          σ⁴ 
+"""
+function Base.:(*)(ψ′::Adjoint{T,MPS{L,T}}, O::MPO{L, T}) where {L,T}
+    ψ = ψ′.parent
+    tensors = Array{T,3}[]
+    Ws = dg.(reverse(O.tensors))
+    for i in 1:L
+        W = Ws[i]
+        M = ψ.tensors[i]
+
+        @reduce N[(bᵢ₋₁, aᵢ₋₁), (bᵢ, aᵢ), σᵢ] :=  sum(σ′ᵢ) W[bᵢ₋₁, bᵢ, σᵢ, σ′ᵢ] * M[aᵢ₋₁, aᵢ, σ′ᵢ]
+        push!(tensors, N)
+    end
+    adjoint(MPS{L, T}(tensors))
+end
+#+END_SRC 
+#+HTML: </p>
+#+HTML: </details>
+
+#+HTML: </p>
+#+HTML: </details>
+
+*** Compression
+#+HTML: <details><summary>Source</summary>
+#+HTML: <p>
+#+BEGIN_SRC julia :comments both :tangle src/compression.jl
+
+
+function compress(ψ::MPS{L, T}, to_the::Right; Dcut::Int=typemax(Int)) where {L, T}
+    tensors = Array{T, 3}[]
+    
+    B = ψ[1]
+    d = length(B[1, 1, :])
+    
+    @cast Bm[(σ¹, a⁰), a¹] |= B[a⁰, a¹, σ¹]
+    U, S, V = psvd(Bm, rank=Dcut)
+    #S = S/√sum(S .^ 2)
+
+    @cast A[a⁰, a¹, σ¹] |= U[(σ¹, a⁰), a¹] (σ¹:d)
+    push!(tensors, A)
+    
+    for i ∈ 2:L
+        B = ψ[i]
+        d = length(B[1, 1, :])
+
+        @tensor M[aⁱ⁻¹, aⁱ, σⁱ] := (Diagonal(S)*V')[aⁱ⁻¹, aⁱ⁻¹′] * B[aⁱ⁻¹′, aⁱ, σⁱ]
+        @cast   Mm[(σⁱ, aⁱ⁻¹), aⁱ] |= M[aⁱ⁻¹, aⁱ, σⁱ]
+        
+        U, S, V = psvd(Mm, rank=Dcut)
+        #S = S/√sum(S .^ 2)
+
+        @cast A[aⁱ⁻¹, aⁱ, σⁱ] |= U[(σⁱ, aⁱ⁻¹), aⁱ] (σⁱ:d)
+        push!(tensors, A)
+    end
+    MPS{L, T}(tensors), Left()
+end
+
+leftcanonical(ψ) = compress(ψ, right)[1]
+
+function compress(ψ::MPS{L, T}, to_the::Left; Dcut::Int=typemax(Int)) where {L, T}
+    tensors = Array{T, 3}[]
+    
+    A = ψ[L]
+    d = length(A[1, 1, :])
+    @cast Am[aᴸ⁻¹, (σᴸ, aᴸ)] |= A[aᴸ⁻¹, aᴸ, σᴸ]
+    
+    U, S, V = psvd(Am, rank=Dcut)
+    #S = S/√sum(S .^ 2)    
+
+    @cast B[aᴸ⁻¹, aᴸ, σᴸ] |= V'[aᴸ⁻¹, (σᴸ, aᴸ)] (σᴸ:d)
+    push!(tensors, B)
+    
+    for i ∈ (L-1):-1:1
+        A = ψ[i]
+        d = length(A[1, 1, :])
+        @tensor M[aⁱ⁻¹, aⁱ, σⁱ]    := A[aⁱ⁻¹, aⁱ′, σⁱ] * (U * Diagonal(S))[aⁱ′, aⁱ]
+        @cast   Mm[aⁱ⁻¹, (σⁱ, aⁱ)] |= M[aⁱ⁻¹, aⁱ, σⁱ]
+        
+        U, S, V = psvd(Mm, rank=Dcut)
+        #S = S/√sum(S .^ 2)
+
+        @cast B[aⁱ⁻¹, aⁱ, σⁱ] |= V'[aⁱ⁻¹, (σⁱ, aⁱ)] (σⁱ:d)
+        push!(tensors, B)
+    end
+    MPS{L, T}(reverse(tensors)), Right()
+end
+
+rightcanonical(ψ) = compress(ψ, left)[1]
+
+compress(ψ; Dcut) = compress(ψ, left, Dcut=Dcut)[1]
+
+#+END_SRC 
+#+HTML: </p>
+#+HTML: </details>
+
+*** Iterative Ground State Search
+#+HTML: <details><summary>Source</summary>
+#+HTML: <p>
+#+BEGIN_SRC julia :comments both :tangle src/groundstate.jl
+
+function R_exprs(ψ::MPS{L, T}, H::MPO{L, T}) where {L, T}
+    R_exs = Array{T, 3}[]
+    R_ex = ones(T, 1, 1, 1)
+    for l in L:-1:2
+        R_ex = iterate_R_ex(ψ[l], H[l], R_ex) 
+        push!(R_exs, R_ex)
+    end
+    reverse(R_exs)
+end
+
+# function preallocate_hs(ψ::MPS{L, T}) where {L, T}
+#     h_tnsrs = map(ψ.tensors) do M
+#         Dˡ⁻¹, Dˡ, d = size(M)
+#         Array{T, 6}(undef, d, Dˡ⁻¹, Dˡ, d, Dˡ⁻¹, Dˡ)
+#     end
+# end
+
+
+function sweep!(::Right, ψ::MPS{L, T}, H::MPO{L, T}, R_exs) where {L, T}
+    L_exs = Array{T, 3}[]
+    L_ex  = ones(T, 1, 1, 1)
+    E = zero(T)
+    for l in 1:(L-1)
+        W = H[l]
+        
+        E, A, SVp = eigenproblem(right, ψ[l], L_ex, W, R_exs[l])
+        ψ.tensors[l] = A
+
+        L_ex = iterate_L_ex(A, W, L_ex)
+        push!(L_exs, L_ex)
+
+        Bp1 = ψ.tensors[l+1]
+        @tensor Mp1[sⁱ⁻¹, aⁱ, σⁱ] := SVp[sⁱ⁻¹, aⁱ⁻¹] * Bp1[aⁱ⁻¹, aⁱ, σⁱ]
+        ψ.tensors[l+1] = Mp1
+    end
+    L_exs, E
+end
+
+function sweep!(::Left, ψ::MPS{L, T}, H::MPO{L, T}, L_exs) where {L, T}
+    R_exs = Array{T, 3}[]
+    R_ex  = ones(T, 1, 1, 1)
+    E = zero(T)
+    for l in L:-1:2
+        W = H[l]
+
+        E, US, B = eigenproblem(left, ψ[l], L_exs[l-1], W, R_ex)
+        ψ.tensors[l] = B
+
+        R_ex = iterate_R_ex(B, W, R_ex) 
+        push!(R_exs, R_ex)
+
+        Am1 = ψ.tensors[l-1]
+        @tensor Mm1[aˡ⁻², sˡ⁻¹, σˡ⁻¹] :=  Am1[aˡ⁻², aˡ⁻¹′, σˡ⁻¹] * US[aˡ⁻¹′, sˡ⁻¹]
+        ψ.tensors[l-1] = Mm1
+    end
+    R_exs, E
+end
+
+function h_matrix(L_ex::Array{T,3}, W::Array{T,4}, R_ex::Array{T,3}) where {T}
+    @tensor h[σˡ, aˡ⁻¹, aˡ, σˡ′, aˡ⁻¹′, aˡ′] := L_ex[bˡ⁻¹, aˡ⁻¹, aˡ⁻¹′] * W[bˡ⁻¹, bˡ, σˡ, σˡ′] * R_ex[bˡ, aˡ, aˡ′]
+    @cast h[(σˡ, aˡ⁻¹, aˡ), (σˡ′, aˡ⁻¹′, aˡ′)] := h[σˡ, aˡ⁻¹, aˡ, σˡ′, aˡ⁻¹′, aˡ′]
+end
+
+function eigenproblem(dir::Direction, M::Array{T, 3}, L_ex::Array{T, 3}, W::Array{T, 4}, R_ex::Array{T, 3}) where {T}
+    @cast v[(σˡ, aˡ⁻¹, aˡ)] |= M[aˡ⁻¹, aˡ, σˡ]
+    
+    h = h_matrix(L_ex, W, R_ex)
+    λ, Φ = eigs(h, v0=v, nev=1, which=:SR)
+    E  = λ[1]::T 
+    v⁰ = (Φ[:,1])::Vector{T}
+
+    (E, split_tensor(dir, v⁰, size(M))...)
+end
+
+function split_tensor(::Right, v⁰::Vector, (Dˡ⁻¹, Dˡ, d))
+    @cast Mm[(σˡ, aˡ⁻¹), aˡ] := v⁰[(σˡ, aˡ⁻¹, aˡ)] (aˡ⁻¹:Dˡ⁻¹, aˡ:Dˡ, σˡ:d)
+    U, S, V = svd(Mm)
+    @cast A[aˡ⁻¹, aˡ, σˡ] |= U[(σˡ, aˡ⁻¹), aˡ] (σˡ:d, aˡ⁻¹:Dˡ⁻¹, aˡ:Dˡ)
+    A, Diagonal(S)*V'
+end
+
+function split_tensor(::Left, v⁰::Vector, (Dˡ⁻¹, Dˡ, d))
+    @cast Mm[aˡ⁻¹, (σˡ, aˡ)] |= v⁰[(σˡ, aˡ⁻¹, aˡ)] (aˡ⁻¹:Dˡ⁻¹, aˡ:Dˡ, σˡ:d)
+    U, S, V = svd(Mm)
+    @cast B[aˡ⁻¹, aˡ, σˡ] |= V'[aˡ⁻¹, (σˡ, aˡ)] (σˡ:d)
+    U*Diagonal(S), B
+end
+
+function iterate_R_ex(B, W, R_ex) where {T}
+    @tensoropt R_ex′[bⁱ⁻¹, aⁱ⁻¹, aⁱ⁻¹′] := (conj.(B))[aⁱ⁻¹,aⁱ,σⁱ] * W[bⁱ⁻¹,bⁱ,σⁱ,σⁱ′] * B[aⁱ⁻¹′,aⁱ′,σⁱ′] * R_ex[bⁱ,aⁱ,aⁱ′]
+end
+
+function iterate_L_ex(A, W, L_ex) where {T}
+    @tensoropt L_ex′[bˡ, aˡ, aˡ′] := L_ex[bˡ⁻¹,aˡ⁻¹,aˡ⁻¹′] * (conj.(A))[aˡ⁻¹,aˡ,σˡ] * W[bˡ⁻¹,bˡ,σˡ,σˡ′] * A[aˡ⁻¹′,aˡ′,σˡ′]
+end
+
+
+"""
+    ground_state(ψ::MPS{L, T}, H::MPO{L, T}; maxiter=10, quiet=false, ϵ=1e-8) where {L, T}
+
+Perform the finite system density matrix renormalization group
+algorithm. First this will build up the R expressions, then do right
+and left sweeps until either
+ 1) The state converges to an eigenstate `ϕ` such that
+    ϕ' * H * H * ϕ ≈ (ϕ' * H * ϕ) 
+to the requested tolerance `ϵ`
+ 2) The energy eigenvalue stops changing (possible signaling the algorithm is 
+stuck in a local minimum)
+ 3) The number of full (right and left) sweeps exceeds `maxiter`. 
+
+Setting `quiet=true` will suppress notifications about the algorithm's
+progress but *not* warnings due to non-convergence.
+"""
+function ground_state(ψ::MPS{L, T}, H::MPO{L, T}; maxiter=10, quiet=false, ϵ=1e-8) where {L, T}
+    ϕ = ψ |> copy
+
+    quiet || println("Computing R expressions")
+    R_exs = R_exprs(ψ, H)
+
+    converged = false
+    count     = 0
+    E₀ = zero(T)
+    enable_cache(maxsize=5*10^9)
+    while not(converged)
+        quiet || println("Performing right sweep")
+        L_exs, E₀′ = sweep!(right, ϕ, H, R_exs)
+
+        quiet || println("Performing left sweep")
+        R_exs, E₀  = sweep!(left,  ϕ, H, L_exs)
+
+        count += 1
+        if iseigenstate(ϕ, H, ϵ=ϵ)
+            quiet || println("Converged in $count iterations")
+            converged = true
+        elseif count > 1 && E₀ ≈ E₀′
+                @warn """
+Energy eigenvalue converged but state is not an eigenstate.
+Consider either lowering your requested tolerance or 
+implementing a warm-up algorithm to avoid local minima.
+"""
+            break
+        elseif count >= maxiter
+            @warn "Did not converge in $maxiter iterations"
+            break
+        end
+    end
+    clear_cache()
+    ϕ, E₀
+end
+
+
+function iseigenstate(ψ::MPS, H::MPO; ϵ=1e-8)
+    ϕ = rightcanonical(ψ)
+    isapprox(ϕ' * (H * H * ϕ), (ϕ' * (H * ϕ))^2, rtol=ϵ)
+end
+
+#+END_SRC
+#+HTML: </details>
+#+HTML: </p>
+
+*** Correlation Functions
+#+HTML: <details><summary>Source</summary>
+#+HTML: <p>
+#+BEGIN_SRC julia :comments both :tangle src/correlation.jl
+
+"""
+    two_point_correlator((i, op_i)::Pair{Int, Matrix}, (j, op_j)::Pair{Int, Matrix}, L)
+
+Create an MPO on `L` sites (with bond dimension 1) representing identity operators everywhere except
+sites `i` and `j` where `op_i` and `op_j` are inserted instead. ie.
+
+    𝟙 ⊗ 𝟙 ⊗ ... ⊗ op_i ⊗ 𝟙 ⊗ ... ⊗ op_j ⊗ 𝟙 ⊗ ... ⊗ 𝟙
+
+example: spin-spin correlation function
+
+we can construct ⟨σᶻᵢσᶻⱼ⟩ on a 12 site lattice as
+    σᶻ = [1 0; 0 -1]
+    two_point_correlator(i=>σᶻ, j=>σᶻ, 12)  
+"""
+function two_point_correlator((i, op_i), (j, op_j), L)
+    d = size(op_i)[1]
+    @assert (size(op_i) == (d, d)) && (size(op_j) == (d, d))
+    @assert i in 1:L
+    @assert j in 1:L
+    id = diagm(0 => ones(Complex{Float64}, d))
+
+    op_i_tnsr = reshape(convert(Matrix{Complex{Float64}}, op_i), 1, 1, d, d) 
+    op_j_tnsr = reshape(convert(Matrix{Complex{Float64}}, op_j), 1, 1, d, d)
+    id_tnsr   = reshape(id, 1, 1, d, d)
+
+    tensors = map(1:L) do l
+        O_tnsr = (l == i ? op_i_tnsr : 
+                  l == j ? op_j_tnsr : 
+                  id_tnsr)
+    end 
+    MPO{L,Complex{Float64}}(tensors)
+end
+
+
+
+
+#+END_SRC
+#+HTML: </details>
+#+HTML: </p>
+*** Imaginary Time Evolution
+I don't think this works!
+#+HTML: <details><summary>Source</summary>
+#+HTML: <p>
+#+BEGIN_SRC julia :comments both :tangle src/timeevolution.jl
+
+# Fixme! this does not appear to find ground states!
+
+function _MPO_handed_time_evolver(hs::Vector{Matrix{T}}, τ, L, d) where {T}
+    tensors = Array{T, 4}[]
+    for h in hs
+        O = exp(-τ*h)
+        @cast P[(σⁱ, σⁱ′), (σⁱ⁺¹, σⁱ⁺¹′)] |= O[(σⁱ, σⁱ⁺¹), (σⁱ′, σⁱ⁺¹′)] (σⁱ:d, σⁱ′:d)
+        U, S, V = svd(P)
+
+        @cast U[1, k, σⁱ, σⁱ′]     := U[(σⁱ, σⁱ′), k] * √(S[k])      (σⁱ:d)
+        @cast Ū[k, 1, σⁱ⁺¹, σⁱ⁺¹′] := √(S[k]) * V'[k, (σⁱ⁺¹, σⁱ⁺¹′)] (σⁱ⁺¹:d)
+        push!(tensors, U, Ū)
+    end
+    MPO{L, T}(tensors)
+end
+
+function MPO_time_evolvers(h1::Matrix, hi::Matrix, hL::Matrix, τ, L, d)
+    if iseven(L)
+        odd_hs  = [h1, [hi for _ in 3:2:(L-1)]...]
+        even_hs = [[hi for i in 2:2:(L-1)]..., hL]
+    else
+        odd_hs  = [h1, [hi for _ in 3:2:(L-1)]..., hL]
+        even_hs = [hi for i in 2:2:(L-1)]
+    end
+    
+    Uodd  = _MPO_handed_time_evolver(odd_hs, τ, L, d)
+    Ueven = _MPO_handed_time_evolver(even_hs, τ, L, d)
+    Uodd, Ueven
+end
+
+function imag_time_evolution(ψ::MPS{L, T}, h1::Matrix{T}, hi::Matrix{T}, hL::Matrix{T}, 
+                             β, N, Dcut) where {L, T}
+    @warn "This probably still doesn't work!"
+    τ = β/N
+    d = length(ψ[1][1, 1, :])
+    ϕ = ψ  # Ground state guess
+    dir = left
+    Uodd, Ueven = MPO_time_evolvers(h1, hi, hL, τ, L, d)
+    for _ in 1:N
+        ϕ1, dir = compress(Uodd  * ϕ,  dir, Dcut=Dcut)
+        ϕ,  dir = compress(Ueven * ϕ1, dir, Dcut=Dcut)
+        #ϕ,  dir = compress(Uodd  * ϕ2, dir, Dcut=Dcut)
+    end
+    ϕ
+end
+#+END_SRC
+#+HTML: </details>
+#+HTML: </p>
+
+** Tests
+#+HTML:  <details><summary>Source</summary>
+#+HTML: <p>
+#+BEGIN_SRC julia :comments both :tangle test/runtests.jl
+using Test, MatrixProductStates, SparseArrays, Arpack
+
+@testset "TFIM   " begin
+    g = 1.0; L = 7
+
+    function H_TFIM(g, L)
+        id = [1  0; 
+              0  1]
+        σˣ = [0  1; 
+              1  0]
+        σᶻ = [1  0; 
+              0 -1]
+        W_tnsr = zeros(Complex{Float64}, 3, 3, 2, 2)
+        W_tnsr[1, 1, :, :] = id    
+        W_tnsr[2, 1, :, :] = -σᶻ  
+        W_tnsr[3, 1, :, :] = -g*σˣ
+        W_tnsr[3, 2, :, :] = σᶻ   
+        W_tnsr[3, 3, :, :] = id   
+
+        return MPO(W_tnsr, L)
+    end
+    H = H_TFIM(g, L)
+    ψ = randn(MPS{L, Complex{Float64}}, 100, 2)
+    
+    ψ̃ = compress(ψ, left, Dcut=80)[1] # Note: no actual information is lost in this 
+    # compression because of the small size of the chain
+
+    @test              ψ̃'ψ̃ ≈ 1
+    @test          ψ'ψ/ψ'ψ ≈ ψ̃'ψ̃
+    @test ((ψ'*(H*ψ))/ψ'ψ) ≈ (ψ̃' * (H * ψ̃))/ψ̃'ψ̃
+    @test ((ψ'*(H*ψ))/ψ'ψ) ≈ (ψ̃' * (H * ψ))/ψ̃'ψ
+
+    ϕ, E₀ = ground_state(ψ, H, quiet=true)
+    @test ϕ' * H * H * ϕ ≈ (ϕ'*H*ϕ)^2
+end
+
+@testset "Hubbard" begin
+
+    id = [1 0
+          0 1]
+    c  = [0 0
+          1 0] #Anti commuting matrix
+    c_up = c  ⊗ id
+    c_dn = id ⊗ c
+    id²  = id ⊗ id
+    n_up = c_up' * c_up
+    n_dn = c_dn' * c_dn
+
+    P_up = (id² - 2c_up'*c_up) # Spin up parity operator
+    P_dn = (id² - 2c_dn'*c_dn) # Spin down parity operator
+
+    function H_hub(U, μ, L)
+        W_tnsr = zeros(Complex{Float64}, 6, 6, 4, 4)
+        W_tnsr[1, 1, :, :] = id²
+        W_tnsr[2, 1, :, :] = c_up'
+        W_tnsr[3, 1, :, :] = c_dn'
+        W_tnsr[4, 1, :, :] = c_up
+        W_tnsr[5, 1, :, :] = c_dn
+        W_tnsr[6, 1, :, :] = U*(n_up * n_dn) - μ*(n_up + n_dn)
+        W_tnsr[6, 2, :, :] =  c_up  * P_up  # Must multiply by the parity operator to get 
+        W_tnsr[6, 3, :, :] =  c_dn  * P_dn  # correct off-site commutation relations!
+        W_tnsr[6, 4, :, :] = -c_up' * P_up
+        W_tnsr[6, 5, :, :] = -c_dn' * P_dn
+        W_tnsr[6, 6, :, :] = id²
+        MPO(W_tnsr, L)
+    end
+
+    function solve_hub(U, μ, L; retfull=true, quiet=true)
+        H = H_hub(U, μ, L)
+        ψ = randn(MPS{L, Complex{Float64}}, 100, 4)
+        (ϕ, E₀), t, bytes = @timed ground_state(ψ, H, ϵ=1e-5, quiet=quiet)
+
+        (ϕ=ϕ, E₀=E₀, H=H, t=t, Gbytes=bytes/1e9)
+    end
+
+    function Hub_ED(U, μ, L,)
+        Û = U*(n_up * n_dn) - μ*(n_up + n_dn)
+        c_dg_up(i) = foldl(⊗, sparse.([i==j ? c_up' : id² for j in 1:L]))
+        cup(i)     = foldl(⊗, sparse.([i==j ? c_up  : id² for j in 1:L]))
+        c_dg_dn(i) = foldl(⊗, sparse.([i==j ? c_dn' : id² for j in 1:L]))
+        cdn(i)     = foldl(⊗, sparse.([i==j ? c_dn  : id² for j in 1:L]))
+        Ûf(i)      = foldl(⊗, sparse.([i==j ? Û     : id² for j in 1:L]))
+        function c_dg_c(i) 
+            out = c_dg_up(i)*cup(i+1) + c_dg_dn(i)*cdn(i+1)
+            out + out'
+        end
+        H = -sum(c_dg_c, 1:(L-1)) + sum(Ûf, 1:L)
+
+        λ, ϕ = eigs(H, nev=1, which=:SR)
+        (ϕ'H*ϕ)[]
+    end
+
+   
+    U = 3.0; μ = -1.0; L = 4
+    H = H_hub(U, μ, L)
+
+    ϕ, E₀ = solve_hub(U, μ, L, retfull=true, quiet=true)
+    @test ϕ' * H * H * ϕ ≈ (ϕ'*H*ϕ)^2  # Make sure energy is eigenvalue
+    @test ϕ' * H * ϕ ≈ E₀              # make sure eigenvalue matches one produced by alogrithm
+    @test ϕ' * H * ϕ ≈ Hub_ED(U, μ, L) # check against exact diagonalization
+end
+
+#+END_SRC
+#+HTML: </details>
+#+HTML: </p>
