@@ -175,7 +175,7 @@ function variational_compress(ψ::MPS{L, T}, to_the::Right, ϕ::MPS{L, T}) where
         temp+=1
         M = ϕ[j]
         M̃ = atensors[temp]
-        prevM = sum([M[:,:,k]'*prevM*M̃[:,:,k] for k in 1:d])
+        prevM = sum([M̃[:,:,k]'*prevM*M[:,:,k] for k in 1:d])
     end
     Lm=prevM
     M = ϕ[L]

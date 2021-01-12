@@ -9,7 +9,7 @@ using LinearAlgebra, TensorOperations, TensorCast, LowRankApprox, Arpack, Stride
 #using ProgressMeter
 
 export *, /, ==, ≈, isequal, adjoint, getindex, randn
-export MPS, MPO, left, right, compress, imag_time_evolution, real_time_evolution, rightcanonical, leftcanonical
+export MPS, MPO, left, right, compress, imag_time_evolution, real_time_evolution, real_timedep_time_evolution, rightcanonical, leftcanonical
 export ground_state, two_point_correlator, realize
 
 include("utils.jl")
