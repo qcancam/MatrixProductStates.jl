@@ -103,24 +103,29 @@ function real_time_evolution(ψ::MPS{L, T}, h1::Matrix{T}, hi::Matrix{T}, hL::Ma
     @warn "This probably still doesn't work!"
     τ = Time/N
     d = length(ψ[1][1, 1, :])
-    ϕ = ψ  # Ground state guess
+    ϕb = ψ
     dir = left
     Uodd, Ueven = MPO_time_evolvers(h1, hi, hL, τ, L, d, "real")
     time_list=Any[]
     expect_list=Any[]
     for i in 1:N
         t = i * τ
-        expect = (ϕ' * (H * ϕ)) / ϕ'ϕ
+        expect = (ϕb' * (H * ϕb)) / ϕb'ϕb
         println("time = ",t)
         println(expect)
         push!(time_list,t)
         push!(expect_list,expect)
 
-        ϕ1, dir = compress(Uodd  * ϕ,  dir, Dcut=Dcut)
-        ϕ,  dir = compress(Ueven * ϕ1, dir, Dcut=Dcut)
-        #ϕ,  dir = compress(Uodd  * ϕ2, dir, Dcut=Dcut)
+        Uoddϕ = Uodd * ϕb
+        ϕa, dir = compress(Uoddϕ,  dir, Dcut=Dcut)
+        #ϕb, dir = variational_compress(ϕa, dir, Uoddϕ)
+        #ϕa, dir = variational_compress(ϕb, dir, Uoddϕ)
+        Uevenϕ = Ueven * ϕa
+        ϕb,  dir = compress(Uevenϕ, dir, Dcut=Dcut)
+        #ϕa, dir = variational_compress(ϕb, dir, Uoddϕ)
+        #ϕb, dir = variational_compress(ϕa, dir, Uoddϕ)
     end
-    ϕ, time_list, expect_list
+    ϕb, time_list, expect_list
 end
 
 # Time Evolution:1 ends here

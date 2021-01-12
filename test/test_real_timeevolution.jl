@@ -12,8 +12,8 @@ using .MatrixProductStates, SparseArrays, Arpack, PyCall, PyPlot
 #np=pyimport("numpy")
 #@pyimport matplotlib.pyplot as plt
 
-g = 1.0; L = 7
-T=10.0
+g = 1.0; L = 5
+T=8.0
 N=1000.0
 τ = T/N
 
